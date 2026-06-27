@@ -1,0 +1,6 @@
+{
+  "name": "PoopCycle",
+  "description": "Pelacak kesehatan pencernaan pintar dengan pencatatan BAB, makanan, gejala, air, aktivitas, analisis statistik, serta prediksi pola BAB bertenaga AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
