@@ -244,6 +244,121 @@ export default function App() {
       return;
     }
 
+    // Helper client-side fallback calculation in case backend is offline or static hosting is used
+    const calculateClientFallback = () => {
+      const sortedPoops = [...data.poops].sort((a, b) => new Date(b.poopTime).getTime() - new Date(a.poopTime).getTime());
+      const lastPoop = sortedPoops[0];
+
+      // 1. Calculate Score
+      let score = 80;
+      
+      // Stool type impact
+      if (lastPoop.bristolType === 3 || lastPoop.bristolType === 4) {
+        score += 10; // Optimal
+      } else if (lastPoop.bristolType === 1 || lastPoop.bristolType === 2) {
+        score -= 15; // Constipation
+      } else if (lastPoop.bristolType === 6 || lastPoop.bristolType === 7) {
+        score -= 15; // Diarrhea
+      } else {
+        score += 5; // Type 5 is soft but okay
+      }
+
+      // Difficulty impact
+      if (lastPoop.difficulty === 'Hard' || lastPoop.difficulty === 'Severe') {
+        score -= 10;
+      } else if (lastPoop.difficulty === 'Easy') {
+        score += 5;
+      }
+
+      // Water impact today
+      const todayStr = new Date().toISOString().split('T')[0];
+      const waterToday = data.waters.find(w => w.logDate === todayStr);
+      const glasses = waterToday ? waterToday.glasses : 0;
+      if (glasses >= 8) {
+        score += 10;
+      } else if (glasses > 0 && glasses < 5) {
+        score -= 10;
+      } else if (glasses === 0) {
+        score -= 15;
+      }
+
+      // Activity impact
+      const hasActivityToday = data.activities.some(act => act.activityTime.startsWith(todayStr));
+      if (hasActivityToday) {
+        score += 5;
+      }
+
+      score = Math.max(10, Math.min(100, score));
+
+      // 2. Health Status
+      let status = 'Sehat';
+      if (lastPoop.bristolType === 1 || lastPoop.bristolType === 2) {
+        status = 'Konstipasi';
+      } else if (lastPoop.bristolType === 6 || lastPoop.bristolType === 7) {
+        status = 'Diare';
+      } else if (lastPoop.bristolType === 5) {
+        status = 'Agak Lunak';
+      }
+
+      // 3. Predicted Time Range (predict cycle based on stool condition)
+      const lastTime = new Date(lastPoop.poopTime);
+      let cycleHours = 24;
+      if (status === 'Konstipasi') cycleHours = 36;
+      if (status === 'Diare') cycleHours = 12;
+
+      const predictedDate = new Date(lastTime.getTime() + cycleHours * 60 * 60 * 1000);
+      const startHour = new Date(predictedDate.getTime() - 60 * 60 * 1000);
+      const endHour = new Date(predictedDate.getTime() + 60 * 60 * 1000);
+
+      const formatTime = (d: Date) => d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+      const predictedTimeRange = `${formatTime(startHour)} – ${formatTime(endHour)}`;
+
+      // 4. Confidence Level
+      const confidenceLevel = Math.min(95, 45 + (data.poops.length * 8));
+
+      // 5. Explanation
+      let explanation = '';
+      if (status === 'Konstipasi') {
+        explanation = 'Pencernaan terdeteksi melambat dengan bentuk feses keras. Jadwal berikutnya diprediksi mundur.';
+      } else if (status === 'Diare') {
+        explanation = 'Kontraksi usus tinggi dengan feses cair. Jadwal berikutnya diprediksi lebih cepat.';
+      } else {
+        explanation = 'Siklus pencernaan Anda terpantau teratur dengan bentuk feses ideal.';
+      }
+
+      // 6. Insights
+      const insights: string[] = [];
+      if (status === 'Konstipasi') {
+        insights.push('Tingkatkan asupan makanan berserat (sayur, buah, pepaya) untuk membantu melancarkan usus.');
+      } else if (status === 'Diare') {
+        insights.push('Hindari makanan pedas, berminyak, atau susu sementara waktu untuk meredakan kram perut.');
+      } else {
+        insights.push('Bentuk feses ideal! Pertahankan konsumsi sayur dan makanan gizi seimbang harian.');
+      }
+
+      if (glasses < 6) {
+        insights.push(`Asupan air harian Anda (${glasses} gelas) masih di bawah target 8 gelas. Dehidrasi memperkeras feses.`);
+      } else {
+        insights.push('Asupan cairan harian Anda sangat baik! Ini membantu pelumasan usus secara optimal.');
+      }
+
+      if (data.activities.length === 0) {
+        insights.push('Tambahkan sedikit aktivitas fisik harian (jalan kaki/stretching) untuk merangsang peristaltik usus.');
+      } else {
+        insights.push('Latihan fisik yang Anda lakukan membantu mempercepat metabolisme dan kesehatan usus.');
+      }
+
+      return {
+        healthStatus: status,
+        healthScore: score,
+        predictedTimeRange,
+        confidenceLevel,
+        explanation,
+        insights,
+        isFallback: true
+      };
+    };
+
     setIsAnalyzing(true);
     try {
       const response = await fetch('/api/analyze', {
@@ -271,9 +386,15 @@ export default function App() {
           insights: result.insights || [],
           isFallback: result.isFallback ?? false
         });
+      } else {
+        // HTTP Error (e.g. 404 on static host deployment)
+        const fallback = calculateClientFallback();
+        setAiAnalysis(fallback);
       }
     } catch (error) {
-      console.error('Failed to query AI analysis endpoint:', error);
+      console.warn('Failed to query AI analysis endpoint, using smart client-side analysis fallback:', error);
+      const fallback = calculateClientFallback();
+      setAiAnalysis(fallback);
     } finally {
       setIsAnalyzing(false);
     }
